@@ -1,0 +1,7 @@
+Release/
+Debug/
+graphing/.vscode/
+graphing/.__pychache__/
+graphing/code/
+**/Debug
+**/Release
