@@ -65,23 +65,6 @@ double C_integral(CashOption cashOption, const double r, const double b, const d
 }
 
 
-//// Calculates the C-integral from u-T
-//double C_integral(CashOption cashOption, const double r, const double b, const double u, const double T, const int n) {
-//	//Initialize
-//	double integral = 0;
-//	double t0 = (u > 0) ? u : 0.000001;
-//	double prev = C(cashOption, r, b, t0, T);
-//
-//	// Loop to find trapezoidal integral
-//	for (double i = t0; i < T; i += 1/(double)n) {
-//		double curr = C(cashOption, r, b, t0, i);
-//		integral += (prev + curr) / 2 * (1 / (double)n);
-//		prev = curr;
-//	}
-//
-//	return integral;
-//}
-
 // Calculates the C-integral from u-T
 double C_integral(CashOption cashOption, const double r, std::vector<double> bs, std::vector<double> ts, const double T, const int n) {
 	//Initialize
@@ -156,39 +139,6 @@ double findB(
 	} while (fabs(y - y_target) > epsilon);
 	return x;
 }
-
-//// Finds b* given th, s and k using bisection
-//double findB(
-//	double y_target,         // Target y value
-//	double a,                // Lower bound
-//	double b,                // Upper bound
-//	double epsilon,          // Tolerance
-//	CashOption cashOption,   // Cash Option object holding parameters
-//	const double r0,
-//	const double t, 
-//	const double T,
-//	const int n)   
-//	{
-//
-//	// Choose midpoint and initial y
-//	double x = 0.5 * (a + b);
-//	double y = C_integral(cashOption, r0, x, t, T, n);
-//
-//	do {
-//		if (y > y_target) {
-//			a = x;
-//		} else if(y < y_target) {
-//			b = x;
-//		}
-//
-//		if (x == 0.5 * (a + b)) epsilon = 0.001;
-//		x = 0.5 * (a + b);
-//		y = C_integral(cashOption, r0, x, t, T, n);
-//		//std::cout << x << " " << y << std::endl;
-//		//std::cout << x << " " <<fabs(y - y_target) << std::endl
-//	} while (fabs(y - y_target) > epsilon);
-//	return x;
-//}
 
 // Finds b* given th, s and k using bisection
 double findB(
