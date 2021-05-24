@@ -26,8 +26,8 @@ void log(First&& first, Rest && ...rest)
 auto start = std::chrono::steady_clock::now();
 
 // Initial values (Vasicek parameters from Brøgger & Andreasen)
-double r0 = -0.005, th = 0.0291, s = 0.0069, k = 0.0325, b_star = 0.0259, n = 50, T = 30, dt = 1 / 52.0, l = 0.02;
-double b_hi = 1, b_lo = -1, eps = 0.00001, target = 1;
+double r0 = -0.005, th = 0.0291, s = 0.0069, k = 0.0325, b_star = 0.0259, n = 50, T = 30, dt = 1 / 12.0, l = 0.02;
+double b_hi = 1, b_lo = 0, eps = 0.00001, target = 1;
 const int paths = 100000;
 
 // Random number generator
@@ -35,85 +35,6 @@ RNG<std::mt19937> rng(time(NULL));
 
 // Cash Option object
 CashOption cashOption(th, s, k);
-
-// Swap prices from 07/05/2021; https://fred.stlouisfed.org/release/tables?rid=444&eid=783790&od=2021-05-07
-std::vector<int> maturities = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30 };
-std::vector<double> swapPrices = { 0.00189, 0.00243, 0.00413, 0.00639, 0.00852, 0.01045, 0.01209, 0.01341, 0.01448, 0.01538,
-								  0.01813, 0.01926, 0.01981 };
-
-double temp_th = th;
-double temp_s = s;
-double temp_k = k;
-
-// Calibration
-void calibrate(){
-	double minSSE = 100;
-	double r0_star = 0;
-	double th_star = 0;
-	double s_star = 0;
-	double k_star = 0;
-	double resolution = 0.0001;
-
-	for (double t_r0 = -0.02; t_r0 < 0.01; t_r0 += resolution) {
-		for (double t_th = -0.01; t_th < 0.04; t_th += resolution) {
-			for (double t_k = 0.01; t_k < 0.045; t_k += resolution) {
-				for (double t_s = 0.00000001; t_s < 0.02; t_s += resolution) {
-					
-					CashOption cashOption2(t_th, t_s, t_k);
-					double SSE = 0;
-					std::vector<double> Ps; // ZCB-prices
-
-					for (int t = 1; t < T + 1; t++) {
-						Ps.push_back(cashOption2.P(t_r0, t));
-					}
-
-					for (int i = 0; i < maturities.size(); i++) {
-						double sum = 0;
-						// Because index 0 of Ps = 1, j = 0
-						for (int j = 0; j < maturities[i]; j++) {
-							// Fixed leg is discounted
-							sum += Ps[j];
-						}
-						SSE += (swapPrices[i] * sum / maturities[i] - (1 - Ps[maturities[i] - 1])) * (swapPrices[i] * sum / maturities[i] - (1 - Ps[maturities[i] - 1]));
-					}
-					if (SSE < minSSE) {
-						minSSE = SSE;
-						r0_star = t_r0;
-						th_star = t_th;
-						s_star = t_s;
-						k_star = t_k;
-					}
-				}
-			}
-		}
-	}
-
-
-	std::cout << "SSE: " << minSSE << ", r0 = " << r0_star << ", th = " << th_star << ", s = " << s_star << ", k = " << k_star << std::endl;
-
-	CashOption cashOption2(th_star, s_star, k_star);
-	std::vector<double> Ps; // ZCB-prices
-
-	for (int t = 1; t < T + 1; t++) {
-		Ps.push_back(cashOption2.P(r0_star, t));
-	}
-
-	for (int i = 0; i < maturities.size(); i++) {
-		double sum = 0;
-		// Because index 0 of Ps = 1, j = 0
-		for (int j = 0; j < maturities[i]; j++) {
-			// Fixed leg is discounted
-			sum += Ps[j];
-		}
-		std::cout << swapPrices[i] * sum / maturities[i] << ", " << 1 - Ps[maturities[i] - 1] << std::endl;
-	}
-
-	// returns 
-	// r0 = 0.002
-	// th = -0.0006
-	// s = 0.0018
-	// k = 0.0438
-}
 
 // Calculate ZCB-prices
 void Q1() {
@@ -131,44 +52,78 @@ void Q2() {
 	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
 
 	const int numOfMats = 50;
-	std::vector<std::vector<double>> zcb(numOfMats, std::vector<double>(paths));
-
+	std::vector<std::vector<double>> zcb(numOfMats+1, std::vector<double>(paths));
+	std::vector<std::vector<double>> summaries1;
+	std::vector<std::vector<double>> summaries2;
+	std::vector<double> times1;
+	std::vector<double> times2;
 	// Normal sampling
-	for (int mat = 1; mat < numOfMats + 1; ++mat) {
+	for (int mat = 0; mat <= numOfMats; ++mat) {
+		// Start timer
+		auto t0 = std::chrono::steady_clock::now();
+
+		// Generate normals
 		std::vector<double> W(paths);
 		rng.genNormal(W);
 
+		// Calculations
 		double ekt = exp(-k * mat);
 		double mean = mat * th + (r0 - th) / k * (1 - ekt);
 		double var = s * s / (k * k * k) * (k * mat + 2 * ekt - 0.5 * exp(-2 * k * mat) - 1.5);
 
 		for (int i = 0; i < paths; ++i) {
-			zcb[mat - 1][i] = exp(-(mean + sqrt(var) * W[i]));
+			// Reg sampling
+			zcb[mat][i] = exp(-(mean + sqrt(var) * W[i]));
 		}
-		std::vector<double> summary = Summary(zcb[mat - 1]);
-		log("P(0, ", mat, "), mean: ", summary[0], ", 95%CI: [", summary[2], ",", summary[3], "]\n");
 
+		// End timer
+		auto t1 = std::chrono::steady_clock::now();
+		auto diff = t1 - t0;
+		times1.push_back(std::chrono::duration <double, std::milli>(diff).count());
+
+		// Summary
+		std::vector<double> summary = Summary(zcb[mat]);
+		summaries1.push_back(summary);
+		log("P(0, ", mat, "), mean: ", summary[0], ", 95%CI: [", summary[2], ",", summary[3], "]\n");
 	}
+
+	// Write to files
+	writeList(summaries1, "zcbs", "out21.py");
+	writeList(times1, "times", "out212.py");
 
 	// Antithetic sampling
-	for (int mat = 1; mat < numOfMats + 1; ++mat) {
+	for (int mat = 0; mat <= numOfMats; ++mat) {
+		// Start timer
+		auto t0 = std::chrono::steady_clock::now();
+
+		// Generate normals
 		std::vector<double> W(paths);
 		rng.genNormal(W);
 
+		// Calculations
 		double ekt = exp(-k * mat);
 		double mean = mat * th + (r0 - th) / k * (1 - ekt);
 		double var = s * s / (k * k * k) * (k * mat + 2 * ekt - 0.5 * exp(-2 * k * mat) - 1.5);
 
 		for (int i = 0; i < paths; ++i) {
-			zcb[mat - 1][i] = (exp(-(mean + sqrt(var) * W[i])) + exp(-(mean - sqrt(var) * W[i]))) / 2;
+			// AT sampling
+			zcb[mat][i] = (exp(-(mean + sqrt(var) * W[i])) + exp(-(mean - sqrt(var) * W[i]))) / 2;
 
 		}
-		std::vector<double> summary = Summary(zcb[mat - 1]);
-		log("P(0, ", mat, "), mean: ", summary[0], ", 95%CI: [", summary[2], ",", summary[3], "]\n");
+		// End timer
+		auto t1 = std::chrono::steady_clock::now();
+		auto diff = t1 - t0;
+		times2.push_back(std::chrono::duration <double, std::milli>(diff).count());
 
+		// Summary
+		std::vector<double> summary = Summary(zcb[mat]);
+		summaries2.push_back(summary);
+		log("P(0, ", mat, "), mean: ", summary[0], ", 95%CI: [", summary[2], ",", summary[3], "]\n");
 	}
 
-	writeList(zcb, "test", "out2.py");
+	// Write to files
+	writeList(summaries2, "zcbs", "out22.py");
+	writeList(times2, "times", "out222.py");
 
 	std::cout << std::endl;
 }
@@ -178,16 +133,23 @@ void Q2() {
 void Q3() {
 	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
 
-	// New sigma, new option, new b_star
-	double s2 = 0.0075;
-	CashOption cashOption2(th, s2, k);
-	double b_star2 = findB(1, -0.02, 0.05, 0.00001, cashOption);
+	std::vector<std::vector<double>> volSurface;
+	for (double sigma = 0.00025; sigma <= 0.0075; sigma += 0.000125) {
+		// New sigma, new option, new b_star
+		//double s2 = 0.0075;
+		CashOption cashOption2(th, sigma, k);
+		std::cout << sigma << std::endl;
 
-	// Find integral for different interest rates
-	for (double i = -0.1; i < 0.09; i += 0.02) {
-		std::cout << i << " " << (C_integral_inf(cashOption, i, b_star2) - 1) * 100 << std::endl;
+		double b_star2 = findB(1, 0.0, 0.5, 0.00001, cashOption2);
+
+		// Find integral for different interest rates
+		for (double i = -0.05; i < 0.025; i += 0.0025) {
+			volSurface.push_back({ i, sigma, (C_integral_inf(cashOption2, i, b_star2) - 1) * 100 });
+			std::cout << i << ", " << (C_integral_inf(cashOption2, i, b_star2) - 1) * 100 << std::endl;
+		}
 	}
 
+	writeList(volSurface, "volSurface", "fig31.py");
 	std::cout << std::endl;
 }
 
@@ -223,7 +185,7 @@ void Q5() {
 	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
 
 	dt = 1 / 12.0;
-	std::tuple<std::vector<double>, std::vector<double>> res = r_to_b(cashOption, rng, r0, b_star, paths, dt);
+	std::tuple<std::vector<double>, std::vector<double>> res = r_to_b_t(cashOption, rng, r0, b_star, paths, dt);
 	std::vector<double> integrals = std::get<0>(res);
 	std::vector<double> taus = std::get<1>(res);
 
@@ -232,6 +194,23 @@ void Q5() {
 	std::cout << std::endl;
 }
 
+// Simulate the interest rate, until T
+void Q5_2() {
+	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
+
+	dt = 1 / 12.0;
+	// low sigma
+	std::vector<std::vector<double>> res = simulate_r_to_t(cashOption, rng, r0, T+20, 5, dt);
+	writeList(res, "sims", "out52.py");
+
+	// high sigma
+	double s2 = 0.003;
+	CashOption cashOption2(th, s2, k);
+	std::vector<std::vector<double>> res2 = simulate_r_to_t(cashOption2, rng, r0, T+20, 5, dt);
+	writeList(res2, "sims", "out53.py");
+
+	std::cout << std::endl;
+}
 
 // Printing in python
 void Q6() {
@@ -245,67 +224,135 @@ void Q6() {
 void Q7() {
 	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
 
-	// Initialize parameters
+	// Start time for regular sampling, only interested in the sample time
+	auto t0 = std::chrono::steady_clock::now();
 	double time = 200;
+
+	// Sample
+	std::vector<double> integrals = r_to_b(cashOption, rng, r0, b_star, paths, dt);
+	std::cout << Mean(integrals) << std::endl;
+	// Stop time
+	auto t1 = std::chrono::steady_clock::now();
+	auto diff1 = t1 - t0;
+
+	auto t2 = std::chrono::steady_clock::now();
 	double numerator = 0;
 	double denominator = 0;
 
 	// Find integrals, taus and control variables
-	std::tuple<std::vector<double>, std::vector<double>, std::vector<double>> res = r_to_b_cv(cashOption, rng, r0, b_star, paths, dt, time);
-	std::vector<double> integrals = std::get<0>(res);
-	std::vector<double> taus = std::get<1>(res);
-	std::vector<double> cvs = std::get<2>(res);
+	std::tuple<std::vector<double>, std::vector<double>, std::vector<double>> cvs = r_to_b_cv_t(cashOption, rng, r0, b_star, paths, dt, time);
+	integrals = std::get<0>(cvs);
+	std::vector<double> control = std::get<2>(cvs);
 
 	// Means
 	double integralMean = Mean(integrals);
-	double controlMean = Mean(cvs);
+	double tauMean = Mean(std::get<1>(cvs));
+	double controlMean = Mean(control);
+	std::cout << integralMean << ", " << tauMean  <<", "<< controlMean << std::endl;
 
 	// Calculate num and den
 	for (int i = 0; i < integrals.size(); i++) {
-		numerator += (integrals[i] - integralMean) * (cvs[i] - controlMean);
-		denominator += (cvs[i] - controlMean) * (cvs[i] - controlMean);
+		numerator += (integrals[i] - integralMean) * (control[i] - controlMean);
+		denominator += (control[i] - controlMean) * (control[i] - controlMean);
 	}
 
 	// Parameters
 	double betaHat = numerator / denominator;
 	double analytical = cashOption.P(r0, time);
-	std::vector<double> pcv(paths);
-
-	// Calculate control variables
-	for (int i = 0; i < pcv.size(); i++) {
-		pcv[i] = integrals[i] + betaHat * (analytical - cvs[i]);
+	std::cout << "Analytical: " << analytical << std::endl;
+	// Calculate P_A^CV
+	std::vector<double> pacv(paths);
+	for (int i = 0; i < paths; i++) {
+		pacv[i] = integrals[i] + betaHat * (analytical - control[i]);
 	}
 
+	// Stop time for CV
+	auto t3 = std::chrono::steady_clock::now();
+	auto diff2 = t3 - t2;
+
 	// Print results
-	std::cout << "r(0) = " << r0 << ": ";
-	LogSummary(pcv);
-	double pcvMean = Mean(pcv);
-	std::cout << "Variance without control variable: " << Variance(integrals, integralMean) << std::endl
-		<< "Variance with control variable: " << Variance(pcv, pcvMean) << std::endl
-		<< "Efficiency ratio: " << Variance(integrals, integralMean) / Variance(pcv, pcvMean) << std::endl;
+	std::cout << "T = " << time << std::endl;
+	LogSummary(pacv);
+	double pacvMean = Mean(pacv);
+
+	std::cout << "Variance without control variable: " << Variance(integrals, integralMean) / sqrt(paths) << std::endl
+		<< "Variance with control variable: " << Variance(pacv, pacvMean) / sqrt(paths) << std::endl
+		<< "Efficiency ratio: " << Variance(pacv, pacvMean) / Variance(integrals, integralMean) << std::endl
+		<< "T1: " << std::chrono::duration <double, std::milli>(diff1).count()  << ", T2: " << std::chrono::duration <double, std::milli>(diff2).count() << ", ratio: "
+		<< std::chrono::duration <double, std::milli>(diff1).count() / std::chrono::duration <double, std::milli>(diff2).count() << std::endl;
+
 
 	std::cout << std::endl;
 }
 
 
-// Calculate b(t) then find C(0, T)
+// Calculate b(t)
 void Q8() {
 	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
 
-	std::vector<std::vector<double>> bs;
-	double r = -0.05;
-	T = 100;
-	for (double u = T; u > 0; u -= dt*12) {
-		double b = findB(1, 0, .1, 0.000001, cashOption, 0, u, n*10);
-		std::cout << u << ", " << b << std::endl;
-		bs.push_back({ T-u , b });
+	std::vector<std::vector<double>> B;
+	std::vector<double> Cash;
+
+	for(double t = 5; t <= 100; t+= 5){
+		std::cout << t << std::endl;
+		std::vector<double> bs;
+		std::vector<double> times;
+		for (double u = t; u > 0; u -= dt) {
+			double b = findB(1, 0, .1, 0.000001, cashOption, 0, u, n);
+			bs.push_back( b );
+			times.push_back(t - u);
+		}
+		double price = cashOption.P(r0, t) + C_integral(cashOption, r0, bs, times, t, n);
+		std::cout << C_integral_inf(cashOption, r0, b_star) << std::endl;
+		Cash.push_back(price);
+		B.push_back(times);
+		B.push_back(bs);
 	}
 
-	writeList(bs, "bs", "out8.py");
+	writeList(B, "B", "out8.py");
+	writeList(Cash, "C", "out81.py");
 
-	std::cout << "C(0, " << T << ") = " << cashOption.P(r, T) + C_integral(cashOption, r, bs, T, n) << std::endl;
-	std::cout << "Cinf: " << C_integral_inf(cashOption, r, findB(1, 0, 0.1, 0.000001, cashOption)) << std::endl;
+}
 
+// Calculate b(t)
+void Q8_1() {
+	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
+
+	std::vector<double> Cash;
+
+	for (double t = 10; t <= 300; t += 20) {
+		std::cout << t << std::endl;
+		std::vector<double> bs;
+		std::vector<double> times;
+		for (double u = t; u > 0; u -= dt) {
+			double b = findB(1, 0, .1, 0.000001, cashOption, 0, u, n);
+			bs.push_back(b);
+			times.push_back(t - u);
+		}
+		double price = cashOption.P(r0, t) + C_integral(cashOption, r0, bs, times, t, n);
+		std::cout << price << std::endl;
+		Cash.push_back(price);
+	}
+
+	writeList(Cash, "C", "out83.py");
+
+}
+
+
+// Calculate b* 
+void Q8_2() {
+	std::cout << "--------- " << __FUNCTION__ << " ---------" << std::endl;
+
+	std::vector<std::vector<double>> B;
+
+	for (double sigma = 0.000125; sigma <= 0.00776; sigma += 0.000125) {
+		CashOption cashOption2(th, sigma, k);
+		double b = findB(1, 0, .1, 0.000001, cashOption2);
+		std::cout << sigma << ", " << b << std::endl;
+		B.push_back({ b, sigma });
+	}
+
+	writeList(B, "B", "out82.py");
 }
 
 
@@ -388,14 +435,20 @@ void ER3() {
 	// Find b's
 	double b1 = findB(target, b_lo, b_hi, eps, cashOption);
 	double b2 = findB_early_redemption(target, b_lo, b_hi, eps, l, cashOption);
+	double b3 = findB_early_redemption(target, b_lo, b_hi, eps, 0.04, cashOption);
+	double b4 = findB_early_redemption(target, b_lo, b_hi, eps, 0.08, cashOption);
+	double b5 = findB_early_redemption(target, b_lo, b_hi, eps, 0.16, cashOption);
 
 	// Find base prices at r = 0
 	double baseP = cashOption.P(0, 30);
 	double baseC1 = C_integral_inf(cashOption, 0, b1);
 	double baseC2 = C_integral_early_redemption(cashOption, 0, b2, l);
+	double baseC3 = C_integral_early_redemption(cashOption, 0, b3, 0.04);
+	double baseC4 = C_integral_early_redemption(cashOption, 0, b4, 0.08);
+	double baseC5 = C_integral_early_redemption(cashOption, 0, b5, 0.16);
 
 	// Matrix for data
-	std::vector<std::vector<double>> res(4);
+	std::vector<std::vector<double>> res(7);
 
 	for (double i = -0.05; i < 0.051; i += 0.001) {
 		// Add slice to matrix
@@ -403,6 +456,9 @@ void ER3() {
 		res[1].push_back((cashOption.P(i, 30) / baseP) * 100);
 		res[2].push_back((C_integral_inf(cashOption, i, b1) / baseC1) * 100);
 		res[3].push_back((C_integral_early_redemption(cashOption, i, b2, l) / baseC2) * 100);
+		res[4].push_back((C_integral_early_redemption(cashOption, i, b3, 0.04) / baseC3) * 100);
+		res[5].push_back((C_integral_early_redemption(cashOption, i, b4, 0.08) / baseC4) * 100);
+		res[6].push_back((C_integral_early_redemption(cashOption, i, b5, 0.16) / baseC5) * 100);
 	}
 
 	// Write matrix to .py
@@ -420,27 +476,45 @@ void ER4() {
 
 	// Find b's
 	double b = findB(target, b_lo, b_hi, eps, cashOption);
-	double bER = findB_early_redemption(target, b_lo, b_hi, eps, l, cashOption);
+	double bER1 = findB_early_redemption(target, b_lo, b_hi, eps, l, cashOption);
+	double bER2 = findB_early_redemption(target, b_lo, b_hi, eps, 0.04, cashOption);
+	double bER3 = findB_early_redemption(target, b_lo, b_hi, eps, 0.08, cashOption);
+	double bER4 = findB_early_redemption(target, b_lo, b_hi, eps, 0.16, cashOption);
 
 	// Data matrix
-	std::vector<std::vector<double>> durs(4);
+	std::vector<std::vector<double>> durs(7);
 
-	for (double r = -0.05; r < 0.051; r += 0.0005) {
+	for (double r = -0.05; r < 0.051; r += 0.0002) {
+		// No early redemption
+		std::cout << r << std::endl;
+
 		// No early redemption
 		double cash = C_integral_inf(cashOption, r, b);
 		double der = (C_integral_inf(cashOption, r + dr, b) - cash) / dr;
 		double dur = -1 / cash * der;
 
 		// Early redemption
-		double cashER = C_integral_early_redemption(cashOption, r, bER, l);
-		double derER = (C_integral_early_redemption(cashOption, r + dr, bER, l) - cashER) / dr;
-		double durER = -1 / cashER * derER;
+		double cashER1 = C_integral_early_redemption(cashOption, r, bER1, l);
+		double cashER2 = C_integral_early_redemption(cashOption, r, bER1, 0.04);
+		double cashER3 = C_integral_early_redemption(cashOption, r, bER1, 0.08);
+		double cashER4 = C_integral_early_redemption(cashOption, r, bER1, 0.16);
+		double derER1 = (C_integral_early_redemption(cashOption, r + dr, bER1, l) - cashER1) / dr;
+		double derER2 = (C_integral_early_redemption(cashOption, r + dr, bER1, 0.04) - cashER2) / dr;
+		double derER3 = (C_integral_early_redemption(cashOption, r + dr, bER1, 0.08) - cashER3) / dr;
+		double derER4 = (C_integral_early_redemption(cashOption, r + dr, bER1, 0.16) - cashER4) / dr;
+		double durER1 = -1 / cashER1 * derER1;
+		double durER2 = -1 / cashER2 * derER2;
+		double durER3 = -1 / cashER3 * derER3;
+		double durER4 = -1 / cashER4 * derER4;
 
 		// Add slice to matrix
 		durs[0].push_back(r);
 		durs[1].push_back(b_ZCB);
 		durs[2].push_back(dur);
-		durs[3].push_back(durER);
+		durs[3].push_back(durER1);
+		durs[4].push_back(durER2);
+		durs[5].push_back(durER3);
+		durs[6].push_back(durER4);
 	}
 
 	// Write matrix to py

@@ -6,15 +6,17 @@
 int main() {
 	// Timing
 	auto start = std::chrono::steady_clock::now();
-	//calibrate();
-	Q1();
+	//Q1();
 	//Q2();
 	//Q3();
 	//Q4();
 	//Q5();
+	//Q5_2();
 	//Q6();
 	//Q7();
 	//Q8();
+	Q8_1();
+	//Q8_2();
 	//ER1();
 	//ER2();
 	//ER3();

@@ -83,17 +83,19 @@ double C_integral(CashOption cashOption, const double r, const double b, const d
 //}
 
 // Calculates the C-integral from u-T
-double C_integral(CashOption cashOption, const double r, std::vector<std::vector<double>> b_n_i, const double T, const int n) {
+double C_integral(CashOption cashOption, const double r, std::vector<double> bs, std::vector<double> ts, const double T, const int n) {
 	//Initialize
-	std::vector<std::vector<double>>::iterator it = b_n_i.begin();
 	double integral = 0;
-	double t0 = ((*it)[0] > 0) ? (*it)[0] : 0.000001;
-	double prev = C(cashOption, r, (*it)[1], t0, T);
+	double j = 0;
+	double t0 = (ts[j] > 0) ? ts[j] : 0.000001;
+	double prev = C(cashOption, r, bs[j], t0, t0);
 
 	// Loop to find trapezoidal integral
-	for (double i = t0; i < T; i += 1 / (double)n) {
-		if (((it + 1) != b_n_i.end()) && i >= (*(it + 1))[0]) it++;
-		double curr = C(cashOption, r, (*it)[1], t0, i);
+	for (double i = t0; i <= T; i += 1 / (double)n) {
+		// If we're not at the last b, and the time for next b has come, increment j
+		if ((j + 1) < bs.size() && i >= ts[j+1]) j++;
+
+		double curr = C(cashOption, r, bs[j], t0, i);
 		integral += (prev + curr) / 2 * (1 / (double)n);
 		prev = curr;
 	}
@@ -245,7 +247,53 @@ double findB_early_redemption(
 	return x;
 }
 
-std::tuple<std::vector<double>, std::vector<double>> r_to_b(CashOption cashOption, RNG<std::mt19937> rng, double r0, double b, int paths, double dt) {
+std::vector<std::vector<double>> simulate_r_to_t(CashOption cashOption, RNG<std::mt19937> rng, double r0, double T, int n, double dt) {
+
+	std::vector<std::vector<double>> res;
+
+
+	for (int i = 0; i < n; i++){
+		std::vector<double> rs = {};
+		std::vector<double> ts = {};
+		double r = r0;
+		double t = 0;
+		rs.push_back(r);
+		ts.push_back(t);
+
+		while (t <= T) {
+			double dr = cashOption.get_k() * (cashOption.get_th() - r) * dt + cashOption.get_s() * rng.genNormal(0, sqrt(dt));
+			r += dr;
+			t += dt;
+			rs.push_back(r);
+			ts.push_back(t);
+		}
+		res.push_back(rs);
+		res.push_back(ts);
+	}
+
+	return res;
+}
+
+std::vector<double> r_to_b(CashOption cashOption, RNG<std::mt19937> rng, double r0, double b, int paths, double dt) {
+	std::vector<double> rs;
+
+	for (int i = 0; i < paths; i++) {
+		double r = r0;
+		double t = 0;
+		double integral = 0;
+		while (r < b) {
+			double dr = cashOption.get_k() * (cashOption.get_th() - r) * dt + cashOption.get_s() * rng.genNormal(0, sqrt(dt));
+			r += dr;
+			t += dt;
+			integral += r * dt;
+		}
+		rs.push_back(exp(-integral));
+	}
+
+	return rs;
+}
+
+std::tuple<std::vector<double>, std::vector<double>> r_to_b_t(CashOption cashOption, RNG<std::mt19937> rng, double r0, double b, int paths, double dt) {
 	std::vector<double> rs;
 	std::vector<double> ts;
 
@@ -253,7 +301,6 @@ std::tuple<std::vector<double>, std::vector<double>> r_to_b(CashOption cashOptio
 		double r = r0;
 		double t = 0;
 		double integral = 0;
-
 		while (r < b) {
 			double dr = cashOption.get_k() * (cashOption.get_th() - r) * dt + cashOption.get_s() * rng.genNormal(0, sqrt(dt));
 			r += dr;
@@ -267,7 +314,70 @@ std::tuple<std::vector<double>, std::vector<double>> r_to_b(CashOption cashOptio
 	return { rs, ts };
 }
 
-std::tuple<std::vector<double>, std::vector<double>, std::vector<double>> r_to_b_cv(CashOption cashOption, RNG<std::mt19937> rng, double r0, double b, int paths, double dt, double time) {
+std::tuple<std::vector<double>, std::vector<double>> r_to_b_cv(CashOption cashOption, RNG<std::mt19937> rng, double r0, double b, int paths, double dt, double time) {
+	std::vector<double> rs;
+	std::vector<double> cvs;
+
+	for (int i = 0; i < paths; i++) {
+		double r = r0;
+		double t = 0;
+		double integral = 0;
+		bool hitBarrier = false;
+		bool hitTime = false;
+
+		while (!(hitBarrier && hitTime)) {
+			double dr = cashOption.get_k() * (cashOption.get_th() - r) * dt + cashOption.get_s() * rng.genNormal(0, sqrt(dt));
+			r += dr;
+			t += dt;
+			integral += r * dt;
+
+			if (r >= b && !hitBarrier) {
+				hitBarrier = true;
+				rs.push_back(exp(-integral));
+			}
+
+			if (t >= time && !hitTime) {
+				hitTime = true;
+				double cv = exp(-integral);
+				if (isnan(cv)) {
+					cvs.push_back(0);
+				}
+				else {
+					cvs.push_back(cv);
+				}
+			}
+		}
+	}
+	return { rs, cvs };
+}
+
+std::vector<double> CV(CashOption cashOption, RNG<std::mt19937> rng, double r0, int paths, double T, double dt) {
+	std::vector<double> cvs;
+
+	for (int i = 0; i < paths; i++) {
+		double r = r0;
+		double t = 0;
+		double integral = 0;
+
+		while (t < T) {
+			double dr = cashOption.get_k() * (cashOption.get_th() - r) * dt + cashOption.get_s() * rng.genNormal(0, sqrt(dt));
+			r += dr;
+			t += dt;
+			integral += r * dt;
+		}
+
+		double cv = exp(-integral);
+		if (isnan(cv)) {
+			cvs.push_back(0);
+		}
+		else {
+			cvs.push_back(exp(-integral));
+		}
+	}
+	return cvs;
+}
+
+std::tuple<std::vector<double>, std::vector<double>, std::vector<double>> r_to_b_cv_t(CashOption cashOption, RNG<std::mt19937> rng, double r0, double b, int paths, double dt, double time) {
 	std::vector<double> rs;
 	std::vector<double> ts;
 	std::vector<double> cvs;
@@ -305,6 +415,5 @@ std::tuple<std::vector<double>, std::vector<double>, std::vector<double>> r_to_b
 	}
 	return { rs, ts, cvs };
 }
-
 
 #endif

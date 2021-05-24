@@ -15,6 +15,10 @@ public:
         rng = generator;
     }
 
+    T getState(){
+        return rng;
+    }
+
     // Gen uniform realization
     double genUniform() {
         return rng() / (double)rng.max();
